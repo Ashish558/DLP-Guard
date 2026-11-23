@@ -7,6 +7,8 @@ Before a prompt or file leaves the browser, DLP Guard checks it for the marker `
 (text prompts, text files, PDFs and images). If it is found, a **native Windows dialog** asks you to
 **Continue** or **Cancel**. After you continue, the next AI response appears in orange.
 
+![DLP Guard approval popup](docs/images/popup.png)
+
 **No browser extension, plugin or add-on is used.** DLP Guard is a Python desktop app. It starts your
 normal Edge or Chrome and watches it from outside over the browser's built-in DevTools debugging protocol.
 See [docs/architecture.md](docs/architecture.md).
