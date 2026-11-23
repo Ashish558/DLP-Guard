@@ -1,0 +1,25 @@
+[project]
+name = "dlp-guard"
+version = "0.1.0"
+description = "Lightweight DLP for ChatGPT and Perplexity: native confirmation when WALLED_SENSITIVE is about to be sent"
+requires-python = ">=3.10"
+dependencies = [
+  "pymupdf>=1.24",
+  "pillow>=10",
+  "websockets>=13",
+  "winocr>=0.0.8; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+tray = ["pystray>=0.19"]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["app"]
+
+[tool.setuptools.package-data]
+"dlp_guard.browser" = ["js/*.js"]
+
+[tool.pytest.ini_options]
+pythonpath = ["app"]
+testpaths = ["tests"]
