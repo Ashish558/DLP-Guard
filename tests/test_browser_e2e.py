@@ -115,6 +115,38 @@ def test_gates_against_real_browser(tmp_path):
         shutil.rmtree(profile, ignore_errors=True)
 
 
+@pytest.mark.skipif(find_browser() is None, reason="Edge/Chrome not installed")
+def test_sensitive_response_highlight_survives_refresh(tmp_path):
+    srv = HTTPServer(("127.0.0.1", 0), _Page)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    page_url = f"http://127.0.0.1:{srv.server_address[1]}/"
+    site = Site(name="TestChat", hosts=("127.0.0.1",), start_url=page_url,
+                send_button=('button[aria-label="Send message"]',),
+                assistant_message=('[data-message-author-role="assistant"]',))
+    dialog = FakeDialog()
+    dialog.answers = [True]
+    guard = Guard(dialog, AuditLog(tmp_path / "audit.jsonl"))
+    port = free_port()
+    profile = Path(tempfile.mkdtemp(prefix="dlp-refresh-e2e-"))
+    proc = launch(page_url, port=port, profile=profile, headless=True)
+    controller = BrowserController(guard, (site,), port=port)
+    try:
+        for _ in range(100):
+            if is_debuggable(port):
+                break
+            time.sleep(0.1)
+        assert is_debuggable(port), "browser did not start"
+        asyncio.run(_wait_for_loaded_page(port, page_url))
+        controller.start()
+        assert controller.connected.wait(15)
+        asyncio.run(_refresh_scenario(port))
+    finally:
+        controller.stop()
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+        srv.shutdown()
+        shutil.rmtree(profile, ignore_errors=True)
+
+
 async def _wait_for_loaded_page(port, page_url):
     conn = await Connection.connect(browser_ws_url(port), lambda *a: None)
     try:
@@ -237,6 +269,45 @@ async def _scenario(port, dialog):
     await ev("document.body.insertAdjacentHTML('beforeend', '<div data-message-author-role=\"assistant\"><p>file answer</p></div>')")
     file_color_expr = "getComputedStyle(document.querySelectorAll('[data-message-author-role] p')[2]).color"
     assert await wait_for(lambda: _eq(ev(file_color_expr), "rgb(232, 89, 12)"))
+    await conn.close()
+
+
+async def _refresh_scenario(port):
+    conn = await Connection.connect(browser_ws_url(port), lambda *a: None)
+    targets = (await conn.send("Target.getTargets"))["targetInfos"]
+    target = next(t for t in targets if t["type"] == "page")
+    sid = (await conn.send("Target.attachToTarget", {
+        "targetId": target["targetId"], "flatten": True,
+    }))["sessionId"]
+
+    async def ev(expr):
+        result = await conn.send("Runtime.evaluate", {
+            "expression": expr, "returnByValue": True, "awaitPromise": True,
+        }, sid)
+        return result.get("result", {}).get("value")
+
+    async def enter_sensitive_prompt():
+        await ev("document.getElementById('box').value=''; document.getElementById('box').focus()")
+        await conn.send("Input.insertText", {"text": "WALLED_SENSITIVE"}, sid)
+        for event_type in ("keyDown", "keyUp"):
+            await conn.send("Input.dispatchKeyEvent", {
+                "type": event_type, "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13,
+                "text": "\r" if event_type == "keyDown" else "",
+            }, sid)
+
+    assert await wait_for(lambda: _eq(ev("!!window.__dlpGuardInstalled"), True))
+    await enter_sensitive_prompt()
+    assert await wait_for(lambda: _eq(ev("window.__sent.length"), 1))
+    await ev("document.querySelector('[data-message-author-role] p').textContent = 'approved answer'")
+    color_expr = "getComputedStyle(document.querySelector('[data-message-author-role] p')).color"
+    assert await wait_for(lambda: _eq(ev(color_expr), "rgb(232, 89, 12)"))
+    assert await ev("sessionStorage.getItem('dlp-guard-sensitive-responses:TestChat:/')") == "[0]"
+
+    await ev("setTimeout(() => location.reload(), 10); true")
+    assert     await wait_for(lambda: _eq(ev(
+        "!!window.__dlpGuardInstalled && !!document.getElementById('dlp-guard-response-color')"
+    ), True))
+    assert await wait_for(lambda: _eq(ev(color_expr), "rgb(232, 89, 12)"))
     await conn.close()
 
 

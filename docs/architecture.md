@@ -102,7 +102,8 @@ Inspection and the dialog run on worker threads, so a waiting dialog never block
 `browser/js/response_style.js` watches the configured assistant-message selectors. The app reports
 whether approved prompt/file content contained the marker; only then is the next assistant message
 marked for orange styling. Clean prompts and existing responses retain the site's default colors.
-A light timer re-adds the CSS rule if the site removes it.
+Sensitive response positions are kept in session storage per conversation and restored after a page
+refresh. A light timer re-adds the CSS rule if the site removes it.
 
 ## Per-site configuration
 
