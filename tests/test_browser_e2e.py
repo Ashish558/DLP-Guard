@@ -104,6 +104,7 @@ def test_gates_against_real_browser(tmp_path):
                 break
             time.sleep(0.1)
         assert is_debuggable(port), "browser did not start"
+        asyncio.run(_wait_for_loaded_page(port, page_url))
         controller.start()
         assert controller.connected.wait(15)
         asyncio.run(_scenario(port, dialog))
@@ -112,6 +113,27 @@ def test_gates_against_real_browser(tmp_path):
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
         srv.shutdown()
         shutil.rmtree(profile, ignore_errors=True)
+
+
+async def _wait_for_loaded_page(port, page_url):
+    conn = await Connection.connect(browser_ws_url(port), lambda *a: None)
+    try:
+        targets = (await conn.send("Target.getTargets"))["targetInfos"]
+        target = next(t for t in targets if t["type"] == "page")
+        sid = (await conn.send("Target.attachToTarget", {
+            "targetId": target["targetId"], "flatten": True,
+        }))["sessionId"]
+
+        async def loaded():
+            result = await conn.send("Runtime.evaluate", {
+                "expression": "document.readyState === 'complete' && location.href === " + json.dumps(page_url),
+                "returnByValue": True,
+            }, sid)
+            return result.get("result", {}).get("value", False)
+
+        assert await wait_for(loaded), "page did not finish loading before controller startup"
+    finally:
+        await conn.close()
 
 
 async def _scenario(port, dialog):
@@ -139,9 +161,14 @@ async def _scenario(port, dialog):
     assert await wait_for(lambda: ev("!!window.__dlpGuardInstalled")), "script was not injected"
 
     # 1. clean prompt: goes through, no dialog
+    color_expr = "getComputedStyle(document.querySelector('[data-message-author-role] p')).color"
+    default_color = await ev(color_expr)
+    assert default_color != "rgb(232, 89, 12)"
     await type_and_enter("hello there")
     assert await wait_for(lambda: _eq(sent(), 1))
     assert dialog.calls == []
+    await ev("document.querySelector('[data-message-author-role] p').textContent = 'generic answer'")
+    assert await ev(color_expr) == default_color
 
     # 2. marker prompt + Cancel: nothing sent, text stays
     dialog.answers = [False]
@@ -161,6 +188,14 @@ async def _scenario(port, dialog):
                                                    "text": "\r" if t == "keyDown" else ""}, sid)
     assert await wait_for(lambda: _eq(sent(), 2))
     assert await ev("window.__sent[1]") == "this is WALLED_SENSITIVE text"
+    await ev("document.querySelector('[data-message-author-role] p').textContent = 'answer to sensitive prompt'")
+    assert await ev(color_expr) == "rgb(232, 89, 12)"
+    await ev("document.querySelector('[data-message-author-role]').classList.remove('dlp-guard-sensitive-response')")
+    assert await wait_for(lambda: _eq(ev(
+        "document.querySelector('[data-message-author-role]').classList.contains('dlp-guard-sensitive-response')"
+    ), True))
+    await ev("document.body.insertAdjacentHTML('beforeend', '<div data-message-author-role=\"assistant\"><p>generic response</p></div>')")
+    assert await ev("getComputedStyle(document.querySelectorAll('[data-message-author-role] p')[1]).color") == default_color
 
     # 4. files: select txt (sensitive, cancel), png (sensitive, continue), clean txt, scanned pdf
     doc = await conn.send("DOM.getDocument", {}, sid)
@@ -198,9 +233,10 @@ async def _scenario(port, dialog):
     assert sorted(await ev("window.__files[2]")) == ["clean.pdf", "clean.png"]
     assert dialog.calls == [("file", "sensitive_scanned.pdf")]
 
-    # 5. response recolor
-    color = await ev("getComputedStyle(document.querySelector('[data-message-author-role] p')).color")
-    assert color == "rgb(232, 89, 12)"
+    # 5. an approved sensitive file colors the next assistant response
+    await ev("document.body.insertAdjacentHTML('beforeend', '<div data-message-author-role=\"assistant\"><p>file answer</p></div>')")
+    file_color_expr = "getComputedStyle(document.querySelectorAll('[data-message-author-role] p')[2]).color"
+    assert await wait_for(lambda: _eq(ev(file_color_expr), "rgb(232, 89, 12)"))
     await conn.close()
 
 

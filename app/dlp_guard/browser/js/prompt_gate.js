@@ -43,8 +43,9 @@
         const text = textOf(el);
         if (!text.trim()) return;
         const action = await askPrompt(text);
-        if (action !== "allow") return;               // Cancel / error: leave as is
+        if (action !== "allow" && action !== "allow-sensitive") return; // Cancel / error: leave as is
         if (textOf(el) !== text) continue;             // edited meanwhile: inspect again
+        if (action === "allow-sensitive") markSensitiveResponse();
         submit(el);
         return;
       }

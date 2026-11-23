@@ -5,7 +5,7 @@ A standalone desktop application that acts as a lightweight Data Loss Prevention
 
 Before a prompt or file leaves the browser, DLP Guard checks it for the marker `WALLED_SENSITIVE`
 (text prompts, text files, PDFs and images). If it is found, a **native Windows dialog** asks you to
-**Continue** or **Cancel**. It also changes the text color of every AI response on both sites.
+**Continue** or **Cancel**. After you continue, the next AI response appears in orange.
 
 **No browser extension, plugin or add-on is used.** DLP Guard is a Python desktop app. It starts your
 normal Edge or Chrome and watches it from outside over the browser's built-in DevTools debugging protocol.
@@ -49,7 +49,8 @@ Options: `--browser PATH` (choose a browser), `--port N` (debug port, default 92
 * **Attach, drop or paste a file** (txt, PDF or image): it is inspected before the site receives it.
   Sensitive files show a dialog with the file name. **Cancel** drops the file; you can pick it again later.
 * Clean prompts and files go through with no extra step.
-* AI responses appear in orange. Change `RESPONSE_COLOR` in `app/dlp_guard/browser/inject.py`.
+* Responses to approved marker-bearing content appear in orange. Change `RESPONSE_COLOR` in
+  `app/dlp_guard/browser/inject.py`.
 * If the app stops responding, actions are **blocked** with an on-page notice (`--fail-mode allow` lets them through).
 
 The audit log is `%LOCALAPPDATA%\dlp-guard\audit.jsonl` (site, kind, file name, decision; never content).

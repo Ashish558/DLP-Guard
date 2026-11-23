@@ -41,6 +41,7 @@ class BrowserController:
         self._conn: Connection | None = None
         self._urls: dict[str, str] = {}              # targetId -> current url
         self._sessions: dict[str, str] = {}          # sessionId -> targetId
+        self._target_sessions: dict[str, str] = {}    # targetId -> sessionId
         self._partial: dict[tuple[str, int], list] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -85,6 +86,11 @@ class BrowserController:
                 await self._conn.send("Target.setDiscoverTargets", {"discover": True})
                 await self._conn.send("Target.setAutoAttach", {
                     "autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True})
+                targets = await self._conn.send("Target.getTargets")
+                for target in targets.get("targetInfos", []):
+                    if target.get("type") == "page" and target["targetId"] not in self._target_sessions:
+                        await self._conn.send("Target.attachToTarget", {
+                            "targetId": target["targetId"], "flatten": True})
                 log.info("attached to browser on port %s", self._port)
                 self.connected.set()
                 await self._conn.wait_closed()
@@ -97,6 +103,7 @@ class BrowserController:
             self._conn = None
             self._urls.clear()
             self._sessions.clear()
+            self._target_sessions.clear()
             self._partial.clear()
             await asyncio.sleep(1.5)
 
@@ -108,7 +115,10 @@ class BrowserController:
             info = params["targetInfo"]
             self._urls[info["targetId"]] = info.get("url", "")
         elif method == "Target.detachedFromTarget":
-            self._sessions.pop(params.get("sessionId", ""), None)
+            sid = params.get("sessionId", "")
+            target_id = self._sessions.pop(sid, None)
+            if target_id and self._target_sessions.get(target_id) == sid:
+                self._target_sessions.pop(target_id, None)
         elif method == "Runtime.bindingCalled" and session:
             await self._on_binding(params, session)
 
@@ -122,8 +132,16 @@ class BrowserController:
                     await self._conn.send("Runtime.runIfWaitingForDebugger", session=sid)
                 await self._conn.send("Target.detachFromTarget", {"sessionId": sid})
                 return
-            self._sessions[sid] = info["targetId"]
-            self._urls[info["targetId"]] = info.get("url", "")
+            target_id = info["targetId"]
+            existing_sid = self._target_sessions.get(target_id)
+            if existing_sid:
+                if waiting:
+                    await self._conn.send("Runtime.runIfWaitingForDebugger", session=sid)
+                await self._conn.send("Target.detachFromTarget", {"sessionId": sid})
+                return
+            self._sessions[sid] = target_id
+            self._target_sessions[target_id] = sid
+            self._urls[target_id] = info.get("url", "")
             await self._conn.send("Runtime.enable", session=sid)
             await self._conn.send("Runtime.addBinding", {"name": BINDING}, sid)
             await self._conn.send("Page.enable", session=sid)
@@ -168,7 +186,8 @@ class BrowserController:
             else:
                 raw = base64.b64decode(data)
                 decision = await loop.run_in_executor(None, self._guard.check_file, site, name, raw)
-            action = decision.action
+            action = ("allow-sensitive" if decision.action == "allow" and decision.sensitive
+                      else decision.action)
         except Exception:  # noqa: BLE001 - anything unexpected is a block
             log.exception("inspection failed")
             action = "block"

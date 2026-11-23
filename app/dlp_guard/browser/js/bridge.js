@@ -44,7 +44,7 @@ window[CFG.reply] = (id, action) => {
   p.resolve(action);
 };
 
-/** Send one inspection request to the app. Resolves to "allow" or "block". */
+/** Send one inspection request to the app. Resolves to an allow/block action. */
 function ask(kind, name, data) {
   return new Promise((resolve) => {
     const send = window[CFG.binding];
@@ -96,5 +96,10 @@ async function fileAllowed(file) {
     notify(`DLP Guard: could not read "${file.name}", so it was blocked.`);
     return false;
   }
-  return (await ask("file", file.name, b64)) === "allow";
+  const action = await ask("file", file.name, b64);
+  if (action === "allow-sensitive") {
+    markSensitiveResponse();
+    return true;
+  }
+  return action === "allow";
 }

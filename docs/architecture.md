@@ -99,9 +99,10 @@ Inspection and the dialog run on worker threads, so a waiting dialog never block
 
 ## Response coloring
 
-`browser/js/response_style.js` injects one `<style>` rule (`color: ... !important`) for each site's
-assistant-message selectors and all their descendants. CSS instead of a DOM observer means streamed and
-future messages are covered with no per-message code. A light timer re-adds the rule if the site removes it.
+`browser/js/response_style.js` watches the configured assistant-message selectors. The app reports
+whether approved prompt/file content contained the marker; only then is the next assistant message
+marked for orange styling. Clean prompts and existing responses retain the site's default colors.
+A light timer re-adds the CSS rule if the site removes it.
 
 ## Per-site configuration
 
